@@ -16,7 +16,7 @@
 
 2. 非并行计算 non parallel computation
 
-   such 
+   such as
 
    For each batch, do an operation that depends on the data length (e.g. volume rendering)
 
@@ -25,6 +25,7 @@
 ```mermaid
 graph LR
 1[pytorch]-->2[c++]-->3[cuda]
+
 ```
 
 ## Example: Trilinear interpolation
