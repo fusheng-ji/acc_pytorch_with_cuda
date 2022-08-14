@@ -14,7 +14,7 @@ torch::Tensor trilinear_fw_cu( //fw means forward
 	const dim3 threads(16, 16); // define size of thread
 	const dim3 blocks((N+threads.x-1)/threads.x,
 			(F+threads.y-1)/threads.y); //define size of block
-	// lunach kernel
+	// launch kernel
 	// AT_DISPATCH_FLOATING_TYPES -> float 32, float64
 	// AT_DISPATCH_FLOATING_TYPES_AND_HALF -> float 32, float 64, float16
 	// AT_DISPATCH_INTEGRAL_TYPES -> integral
