@@ -57,7 +57,7 @@ graph LR
 2[just in time]-->4["torch.utils.cpp_extension.load()"]
 ```
 
-#### Building with `setuptools`
+### Building with `setuptools`
 
 For the “ahead of time” flavor, we build our C++ extension by writing a `setup.py` script that uses `setuptools` to compile our C++ code. 
 
@@ -92,22 +92,63 @@ setup(
 
 Let’s now take a look at the implementation of our C++ extension, which goes into `interpolation.cpp`.
 
-#### Writing the C++ Op
+```python
+import glob
+import os.path as osp
+from setuptools import setup
+from torch.utils.cpp_extension import CUDAExtension, BuildExtension
+
+ROOT_DIR = osp.dirname(osp.abspath(__file__))
+include_dirs = [osp.join(ROOT_DIR), "include"]
+
+sources = glob.glob('*.cpp')+glob.glob('*.cu') # find all files
+
+
+setup(
+       name='cppcuda_tutorial',
+       version='1.0',
+       author='wenboji',
+       author_email='wenboji0420@gmail.com',
+       description='cppcuda example',
+       long_description='example of accelerating pytorch with cppcuda',
+       ext_modules=[
+           CUDAExtension(
+               name='cppcuda_tutorial',
+               sources=sources,
+               include_dirs=include_dirs,
+               extra_compile_args={'cxx':['-02'],
+                                    'nvcc':['-02']} # accelerate the compilation
+            )
+        ],
+       cmdclass={
+           'build_ext':BuildExtension
+        }
+    )
+```
+
+### Writing the C++ Op
 
 [interpolation.cpp](./interpolation.cpp)
 
 ```c++
 #include <torch/extension.h>
-#include <pybind11/pybind11.h>
+#include "utils.h"
 
 torch::Tensor trilinear_interpolation(
 		torch::Tensor feats,
 		torch::Tensor points){
-	return feats;
+	CHECK_INPUT(feats);
+	CHECK_INPUT(points);
+	return trilinear_fw_cu(feats, points);
 }
-// feats: (N, 8, F)
-// point: (N, 3)
-// N and F can be computed parallel
+
+// input:
+// 	feats: (N, 8, F)
+// 	point: (N, 3)
+// output:
+// 	feat_interp: (N, F)
+// tip: N and F can be computed parallel
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m){
 	m.def("trilinear_interpolation", &trilinear_interpolation, R"pbdoc(
 		m.def("name_in_python",&name_in_cpp)
@@ -122,7 +163,58 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m){
 - [pybind11](https://github.com/pybind/pybind11), which is how we create Python bindings for our C++ code,
 - Headers that manage the details of interaction between ATen and pybind11.
 
-#### Binding to Python
+### Writing a utils.h
+
+```c++
+#include <torch/extension.h>
+// judge input is or isn't Tensor and contiguous
+#define CHECK_CUDA(x) TORCH_CHECK(x.is_cuda(), #x "must be a CUDA tensor")
+
+#define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x "must be contiguous")
+
+#define CHECK_INPUT(x) CHECK_CUDA(x); CHECK_CONTIGUOUS(x)
+
+torch::Tensor trilinear_fw_cu(
+	torch::Tensor feats,
+	torch::Tensor points	
+);
+```
+
+### Writing a CUDA Extension
+
+```c
+#include <torch/extension.h>
+
+torch::Tensor trilinear_fw_cu( //fw means forward
+	torch::Tensor feats,
+	torch::Tensor points	
+){
+	const int N = feats.size(0), F = feats.size(2);
+	torch::Tensor feat_interp = torch::zeros({N, F}, feats.options()); // cpp form
+	// python form:
+	// feat_interp = torch.zeros(N, F, dtype=torch.float32, device='cuda:1')
+	// what if we want to define a variable which have different dtype with input, 
+	//such as integer, with cpp:
+	// torch::Tensor feat_interp = torch::zeros({N, F}, torch::dtype(torch::kInt32).device(feats.device()))
+	const dim3 threads(16, 16); // define size of thread
+	const dim3 blocks((N+threads.x-1)/threads.x,
+			(F+threads.y-1)/threads.y); //define size of block
+	// launch kernel
+	// AT_DISPATCH_FLOATING_TYPES -> float 32, float64
+	// AT_DISPATCH_FLOATING_TYPES_AND_HALF -> float 32, float 64, float16
+	// AT_DISPATCH_INTEGRAL_TYPES -> integral
+
+	AT_DISPATCH_FLOATING_TYPES(feats.type(), "trilinear_fw_cu",([&] {
+		trilinear_fw_kernel<scalar_t><<<blocks, threads>>>(
+	feats.packed_accessor<scalar_t, 3, torch::RestrictPtrTraits, size_t>(),
+	points.packed_accessor<scalar_t, 2, torch::RestrictPtrTraits, size_t>(),
+	feat_interp.packed_accessor<scalar_t, 2, torch::RestrictPtrTraits, size_t>()
+	);
+	}));
+}
+```
+
+### Binding to Python
 
 Once you have your operation written in C++ and ATen, you can use pybind11 to bind your C++ functions or classes into Python in a very simple manner. Questions or issues you have about this part of PyTorch C++ extensions will largely be addressed by [pybind11 documentation](https://pybind11.readthedocs.io/en/stable/).
 
@@ -138,7 +230,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m){
 
 One bit to note here is the macro `TORCH_EXTENSION_NAME`. The torch extension build will define it as the name you give your extension in the `setup.py` script. In this case, the value of `TORCH_EXTENSION_NAME` would be “interpolation_cpp”. This is to avoid having to maintain the name of the extension in two places (the build script and your C++ code), as a mismatch between the two can lead to nasty and hard to track issues.
 
-#### Using Your Extension
+### Using Your Extension
 
 Put the `interpolation.cpp` and `setup.py` under same dir. Then run `python setup.py install ./`  to build and install your extension. 
 
@@ -149,13 +241,19 @@ Once your extension is built, you can simply import it in Python, using the name
 ```python
 import torch
 import cppcuda_tutorial # import your installed c++ extension
+import time
 
-feats = torch.ones(2)
-point = torch.zeros(2)
+def trilinear_interpolation_py(feats, points):
+    feats = torch.ones(2)
+    point = torch.zeros(2)
 
-out = cppcuda_tutorial.trilinear_interpolation(feats, point)
+if __name__ == '__main__':
+    feats = torch.ones(2, device='cuda')
+    points = torch.zeros(2, device='cuda')
 
-print(out)
+    out = cppcuda_tutorial.trilinear_interpolation(feats, points)
+
+    print(out)
 ```
 
 Now we test if the extension can run correctly.
@@ -184,7 +282,11 @@ Finally, the size of Block should be 2*1, that contain two Threads in a row.
 
 Thanks for all the contributors below!
 
-Pytorch official tutorial: https://pytorch.org/tutorials/advanced/cpp_extension.html
+Pytorch Official Tutorial: https://pytorch.org/tutorials/advanced/cpp_extension.html
+
+Pytorch C++ API: https://pytorch.org/cppdocs/
+
+Custom C++ and CUDA Extensions: https://pytorch.org/tutorials/advanced/cpp_extension.html
 
 NYU's lesson: [Introduction to GPUs](https://nyu-cds.github.io/python-gpu/)
 
