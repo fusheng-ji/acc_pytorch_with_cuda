@@ -30,7 +30,20 @@ Combine together all the C++ and CUDA files we'll need and use PyBind11 to build
 
 Fortunately, [PyBind11](https://github.com/pybind/pybind11) is included with Pytorch.
 
+![threadmapping](assets/threadmapping.png)
+
+```mermaid
+graph LR
+1[Kernel<br>CPU]-->2[Grid<br>GPU]-->3[Block<br>GPU]-->4[Thread<br>GPU]
+```
+
 ## Example: Trilinear interpolation
+
+### Bilinear interpolation
+
+![428px-Bilinear_interpolation_visualisation.svg](assets/428px-Bilinear_interpolation_visualisation.svg.png)
+
+Suppose that we want to find the value of the unknown function *f* at the point (*x*, *y*). It is assumed that we know the value of *f* at the four points $$Q_{11} = (x_1, y_1), Q_{12} = (x_1, y_2), Q_{21} = (x_2, y_1), Q_{22} = (x_2, y_2)$$.
 
 ### Writing a C++ Extension
 
@@ -89,10 +102,12 @@ Let’s now take a look at the implementation of our C++ extension, which goes i
 
 torch::Tensor trilinear_interpolation(
 		torch::Tensor feats,
-		torch::Tensor point){
+		torch::Tensor points){
 	return feats;
 }
-
+// feats: (N, 8, F)
+// point: (N, 3)
+// N and F can be computed parallel
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m){
 	m.def("trilinear_interpolation", &trilinear_interpolation, R"pbdoc(
 		m.def("name_in_python",&name_in_cpp)
@@ -125,7 +140,7 @@ One bit to note here is the macro `TORCH_EXTENSION_NAME`. The torch extension bu
 
 #### Using Your Extension
 
-Put the `interpolation.cpp` and `setup.py` under same dir. Then run `python setup.py install`  to build and install your extension. 
+Put the `interpolation.cpp` and `setup.py` under same dir. Then run `python setup.py install ./`  to build and install your extension. 
 
 Once your extension is built, you can simply import it in Python, using the name you specified in your `setup.py` script. Just be sure to `import torch` first, as this will resolve some symbols that the dynamic linker must see:
 
@@ -153,11 +168,25 @@ tensor([1., 1.])
 
 That means pytorch call the c++ extension correctly.
 
+### How to compute size of block
+
+If we have a Tensor which size is 20\*10, and we set Thread's size is 16\*16. 
+
+![compute_block1](assets/compute_block1.png)
+
+Obviously, we can't cover this Tensor with just one Thread. So we need to add another Thread to fit this Tensor. 
+
+![compute_block2](assets/compute_block2.png)
+
+Finally, the size of Block should be 2*1, that contain two Threads in a row.
+
 ## Acknowledgement
 
 Thanks for all the contributors below!
 
 Pytorch official tutorial: https://pytorch.org/tutorials/advanced/cpp_extension.html
+
+NYU's lesson: [Introduction to GPUs](https://nyu-cds.github.io/python-gpu/)
 
 kwea123's tutorial: [YouTube](https://www.youtube.com/watch?v=l_Rpk6CRJYI&list=PLDV2CyUo4q-LKuiNltBqCKdO9GH4SS_ec) and [repo](https://github.com/kwea123/pytorch-cppcuda-tutorial)
 
