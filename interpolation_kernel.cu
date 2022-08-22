@@ -72,6 +72,4 @@ torch::Tensor trilinear_fw_cu( //fw means forward
 				feat_interp.packed_accessor<scalar_t, 2, torch::RestrictPtrTraits, size_t>()
 		);
 	}));
-
-
 }
