@@ -21,8 +21,8 @@ setup(
                name='cppcuda_tutorial',
                sources=sources,
                include_dirs=include_dirs,
-               extra_compile_args={'cxx':['-02'],
-                                    'nvcc':['-02']}
+               extra_compile_args={'cxx':['-O2'],
+                                   'nvcc':['-02']}
             )
         ],
        cmdclass={

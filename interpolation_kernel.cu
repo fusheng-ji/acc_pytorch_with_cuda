@@ -41,6 +41,12 @@ __global__ void trilinear_fw_kernel(
 			);
 }
 
+//if we have many return values, we can write like this below
+//	std::vector<torch::Tensor> trilinear_fw_cu()
+//and we can return our output like this below
+//	return {output1, output2};
+//we also need to change the part of function declaration in "utils.h"
+
 torch::Tensor trilinear_fw_cu( //fw means forward
 	torch::Tensor feats,
 	torch::Tensor points	
@@ -72,4 +78,5 @@ torch::Tensor trilinear_fw_cu( //fw means forward
 				feat_interp.packed_accessor<scalar_t, 2, torch::RestrictPtrTraits, size_t>()
 		);
 	}));
+	return feat_interp; //forgot last time
 }
